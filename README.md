@@ -5,18 +5,18 @@
 [![docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://D3MZ.github.io/Model2Vec.jl/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static embedding models: **allocation-free** for `WordPiece` models, and faster than a native (no-FFI) Rust reference — for both tokenizer families model2vec ships with, `WordPiece` (e.g. `potion-base-8M`) and `Unigram`/SentencePiece (e.g. `potion-multilingual-128M`).
+Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static embedding models: **allocation-free** for both tokenizer families model2vec ships with — `WordPiece` (e.g. `potion-base-8M`) and `Unigram`/SentencePiece (e.g. `potion-multilingual-128M`).
 
 <p align="center"><img src="bench/benchmark.svg" width="820" alt="benchmark"></p>
 
-4,000-record synthetic corpus, M1 Max, single thread, Rust = native (no FFI):
+4,000 real Common Crawl WET records, M1 Max, single thread, Rust = native (no FFI):
 
 | Tokenizer (model) | Julia | Rust | Speedup |
 |---|---:|---:|---:|
-| WordPiece (`potion-base-8M`) | **457,841 records/s, 0 allocs** | 69,332 records/s | **6.60x** |
-| Unigram (`potion-multilingual-128M`) | **79,553 records/s** | 71,398 records/s | **1.11x** |
+| WordPiece (`potion-base-8M`) | **25,025 records/s, 0 allocs** | 7,546 records/s | **3.32x** |
+| Unigram (`potion-multilingual-128M`) | **3,244 records/s, 0 allocs** | 3,517 records/s | **0.92x** |
 
-<sub>Reproduce: `bench/run.sh`.</sub>
+<sub>Reproduce: `bench/run.sh` (extracts real page text from a Common Crawl WET file — see [`bench/extract_wet_corpus.jl`](bench/extract_wet_corpus.jl)).</sub>
 
 In production: [MonsieurPapin](https://github.com/D3MZ/MonsieurPapin.jl) switched from a Rust FFI bridge to this package — **2.4-2.6x faster**, 0.998 score correlation, over 21,465 real web-crawl records.
 
@@ -53,16 +53,16 @@ end
 | Embedding dtype | F32 · F16 · I8 | F32 · F16 · I8 |
 | Per-token weights / dedup-mapping tensors | ✓ | ✗ (errors loudly, not silently wrong) |
 | Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · – |
-| Non-ASCII normalization | Exact | Approximated (exact on ASCII/Latin-script) |
-| Allocation-free hot path | ✗ | ✓ WordPiece · ✗ Unigram |
-| Speed (this repo's benchmark, single thread) | 1.00x | 1.11x–6.60x |
+| Non-ASCII normalization | Exact | Unigram exact · WordPiece approximated |
+| Allocation-free hot path | ✗ | ✓ |
+| Speed (this repo's benchmark, single thread) | 1.00x | 0.92x–3.32x |
 | Language · FFI | Rust · – | Julia · **none** |
 
-Model2Vec.jl trades weighted/deduplicated model tensors and remote Hugging Face downloads for being faster, having no FFI dependency, and (for WordPiece) allocation-free. Both cover the two tokenizer families model2vec ships with and all three embedding dtypes. Details: [Scope](#scope).
+Model2Vec.jl trades weighted/deduplicated model tensors and remote Hugging Face downloads for having no FFI dependency and an allocation-free hot path. Both cover the two tokenizer families model2vec ships with and all three embedding dtypes. Details: [Scope](#scope).
 
 ## Scope
 
-Case-folding and punctuation handling are byte-level ASCII; full Unicode normalization is approximated, not byte-for-byte. WordPiece skips non-ASCII words rather than mis-tokenizing them. Unigram approximates SentencePiece's `Precompiled` charsmap with `Unicode.normalize` — exact on ASCII/Latin-script text, up to a few percent cosine-distance drift on non-Latin-script text. Neither gap crashes or produces garbage; every input still tokenizes and pools to a valid embedding.
+Case-folding and punctuation handling are byte-level ASCII. WordPiece approximates accent stripping and skips non-ASCII words rather than mis-tokenizing them. Unigram implements SentencePiece's `Precompiled` charsmap byte-for-byte (the darts double-array table decoded straight from tokenizer.json) plus the reference crate's exact Viterbi/unk semantics — ≥ 0.9995 cosine agreement with the Rust reference on every one of 4,000 real multilingual web-crawl records (median 1.0). The two residual Unigram edge cases (utf8proc vs `unicode_segmentation` grapheme-cluster version drift, and U+FFFD counting on invalid UTF-8) are documented at the top of `src/unigram.jl`. Neither backend crashes or produces garbage; every input still tokenizes and pools to a valid embedding.
 
 ## How it works
 

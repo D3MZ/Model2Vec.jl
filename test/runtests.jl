@@ -16,6 +16,13 @@ end
 const WORDPIECE_DIR = hubsnapshot("minishlab/potion-base-8M")
 const UNIGRAM_DIR = hubsnapshot("minishlab/potion-multilingual-128M")
 
+# Run the Precompiled charsmap pass alone and materialize its output (test helper only; the
+# hot path never builds this String).
+function cmfold(model, scratch, s)
+    n = Model2Vec.charsmapnormalize!(scratch, model.charsmap, s, ncodeunits(s))
+    String(scratch.charsmapbuf[1:n])
+end
+
 function basicchecks(model, label)
     @testset "$label" begin
         scratch = Scratch(model)
@@ -94,6 +101,27 @@ end
                 @test !any(isnan, v)
             end
         end
+
+        @testset "Precompiled charsmap: real potion-multilingual-128M blob foldings" begin
+            @test length(model.charsmap.trie) == 44288 # 237,539-byte blob: 44,288 darts units + 60,383 pool bytes
+            @test length(model.charsmap.pool) == 60383
+            scratch = Scratch(model)
+            for (s, expect) in (("Ａ", "A"), ("１", "1"), ("…", "..."), ("ﬁ", "fi"),
+                                ("　", " "), ("ｶ", "カ"), (" ", " ")) # ideographic space, NBSP
+                @test cmfold(model, scratch, s) == expect
+            end
+            @test cmfold(model, scratch, "plain ASCII text") == "plain ASCII text" # no match: unchanged
+            @test cmfold(model, scratch, "Ａ１…ﬁ mixed") == "A1...fi mixed"
+        end
+
+        @testset "Unigram is allocation-free after warmup" begin
+            scratch = Scratch(model)
+            texts = ("cat dog", "交易策略 金融市场 Ａ１… test", "Ｈｅｌｌｏ ｶﾀｶﾅ ﬁnance… done")
+            foreach(t -> encode!(scratch, model, t), texts) # compile + first buffer growth
+            for t in texts
+                @test (@allocated encode!(scratch, model, t)) == 0
+            end
+        end
     end
 
     if WORDPIECE_DIR === nothing && UNIGRAM_DIR === nothing
@@ -148,23 +176,24 @@ end
                 limit = Model2Vec.MAX_LENGTH * model.median # 1536-char budget
 
                 short = "cat dog"
-                @test Model2Vec.truncateinput(short, model.median) === short # under budget: unchanged
+                @test Model2Vec.truncatebound(short, model.median) == ncodeunits(short) # under budget: whole
 
                 atlimit = "a"^limit
-                @test Model2Vec.truncateinput(atlimit, model.median) === atlimit # exactly at budget: Rust's None branch
+                @test Model2Vec.truncatebound(atlimit, model.median) == ncodeunits(atlimit) # exactly at budget: Rust's None branch
 
-                kept = Model2Vec.truncateinput(atlimit * "ZZZ", model.median)
-                @test kept == atlimit # cut right before character budget+1, matching nth(chars)'s 0-indexing
-                @test length(kept) == limit
+                over = atlimit * "ZZZ"
+                bound = Model2Vec.truncatebound(over, model.median)
+                @test SubString(over, 1, bound) == atlimit # cut right before character budget+1, matching nth(chars)'s 0-indexing
+                @test bound == limit
 
                 # budget counts characters, not bytes: "é" is 2 bytes but 1 char, so the full
                 # `limit` chars (2*limit bytes) survive and only the char past the budget is cut
-                mb = Model2Vec.truncateinput("é"^limit * "Z", model.median)
-                @test mb == "é"^limit
+                mb = "é"^limit * "Z"
+                @test SubString(mb, 1, thisind(mb, Model2Vec.truncatebound(mb, model.median))) == "é"^limit
                 # over budget in *bytes* but exactly at budget in *chars*: kept whole (the loop
                 # runs -- byte short-circuit can't apply -- but never reaches character budget+1)
                 mbat = "é"^limit
-                @test Model2Vec.truncateinput(mbat, model.median) === mbat
+                @test Model2Vec.truncatebound(mbat, model.median) == ncodeunits(mbat)
 
                 # end-to-end: content past the char budget cannot influence the embedding...
                 head = "cat "^(limit ÷ 4) # exactly `limit` chars
@@ -216,7 +245,7 @@ end
             @testset "Unigram branch coverage: piece match, standalone-meta match, UNK fallback, punctuation" begin
                 scratch = Scratch(model)
                 # "▁cat"/"▁dog" match real pieces; "z", ",", "!" each follow a lone "▁" match
-                # with no continuation -> single-byte UNK fallback; "," and "!" also exercise the
+                # with no continuation -> per-char UNK fallback; "," and "!" also exercise the
                 # ASCII-punctuation branch in normalizeug!.
                 v = encode!(scratch, model, "cat dog z, cat!")
                 @test length(v) == model.dim
@@ -237,11 +266,23 @@ end
                 @test !any(isnan, v)
             end
 
+            @testset "identity charsmap: no Precompiled normalizer in tokenizer.json" begin
+                @test isempty(model.charsmap.trie) # fixture has no normalizer section at all
+                # a normalizer tree *without* any Precompiled node anywhere is identity too
+                cm = Model2Vec.loadcharsmap(Dict{String,Any}("normalizer" => Dict{String,Any}(
+                    "type" => "Sequence", "normalizers" => [Dict{String,Any}("type" => "Strip")])))
+                @test isempty(cm.trie) && isempty(cm.pool)
+                scratch = Scratch(model)
+                @test cmfold(model, scratch, "cat Ａ… dog") == "cat Ａ… dog" # nothing folds without a table
+                # malformed bytes still become U+FFFD (the from_utf8_lossy input boundary), never a crash
+                @test cmfold(model, scratch, String(UInt8[0x63, 0xff, 0x64])) == "c�d"
+            end
+
             @testset "Unigram Viterbi UNK fallback (direct, isolated from real-vocab luck)" begin
                 # Low-level: bypasses load()/encode! entirely so this doesn't depend on whether a
                 # real or fixture vocab happens to have full byte coverage -- 'z' is deliberately
                 # absent from the fixture vocab (root has no child for it), so viterbi! must take
-                # the `!matchedany` branch for it. metaspace! unconditionally prepends "▁" to any
+                # the `!singlenode` UNK branch for it. metaspace! unconditionally prepends "▁" to any
                 # non-empty input first, which the fixture vocab *does* have as a standalone
                 # piece (id 2), so the expected segmentation is ["▁", UNK] not just [UNK].
                 vocab = model.vocab
@@ -256,12 +297,12 @@ end
                 # metaspace prefix); Rust takes lengths[7/2] (0-indexed) = 5 -> 2560-char budget.
                 @test model.median == 5
                 limit = Model2Vec.MAX_LENGTH * model.median
-                # Each 10-char word tokenizes to one real "▁" piece + 9 UNKs (filtered before the
-                # 512-token cap), so 256 words = 256 real tokens: the char budget binds *before*
-                # the token cap, making pre-truncation observable end-to-end.
-                head = "zzzzzzzzz "^(limit ÷ 10) # exactly `limit` chars
+                # Each 20-char word tokenizes to one real "▁" piece + one *fused* UNK run, so
+                # 128 words = 256 tokens, comfortably under the 512-token cap: the char budget
+                # binds *before* the token cap, making pre-truncation observable end-to-end.
+                head = ("z"^19 * " ")^(limit ÷ 20) # exactly `limit` chars
                 @test encode(model, head * "dog") == encode(model, head) # "dog" past the budget: dropped
-                @test encode(model, "zzzzzzzzz "^(limit ÷ 10 - 1) * "zzzzz dog ") != encode(model, head) # inside: kept
+                @test encode(model, ("z"^19 * " ")^(limit ÷ 20 - 1) * "z"^15 * " dog ") != encode(model, head) # inside: kept
 
                 # long invalid UTF-8 through the full Unigram path (truncation + charsmap sanitize)
                 invalid = String(repeat(UInt8[0x63, 0x61, 0x74, 0xff, 0x20], 3 * Model2Vec.MAX_LENGTH))
@@ -270,6 +311,36 @@ end
                 v = encode!(Scratch(model), model, invalid)
                 @test length(v) == model.dim
                 @test !any(isnan, v)
+            end
+        end
+
+        mktempdir() do dir
+            cmdir = buildunigramfixture(joinpath(dir, "ugcm"); charsmap=true)
+            model = load(cmdir)
+
+            @testset "synthetic Precompiled charsmap: darts traversal semantics" begin
+                @test length(model.charsmap.trie) == 240 # found through the nested Sequence tree
+                scratch = Scratch(model)
+                @test cmfold(model, scratch, "A") == "a"      # single-byte key
+                @test cmfold(model, scratch, "…") == "..."    # multi-byte key, longer replacement
+                @test cmfold(model, scratch, "B") == "B"      # no entry: passthrough
+                @test cmfold(model, scratch, "cAt…B") == "cat...B"
+                # first-(shortest-)match semantics, straight from spm_precompiled's results[0]: a
+                # grapheme cluster < 6 bytes is replaced whole by its shortest matching *prefix*'s
+                @test cmfold(model, scratch, "A\u0301") == "a"
+                @test cmfold(model, scratch, "Á") == "a"
+                @test cmfold(model, scratch, "A\u0301\u0301\u0301") == "a\u0301\u0301\u0301"
+                @test cmfold(model, scratch, "Á́́") == "á́́"
+                # lead byte beyond the (deliberately small) trie array: out-of-range -> miss
+                @test cmfold(model, scratch, "😀A") == "😀a"
+                # NUL bytes stop the prefix search (spm_precompiled parity) and pass through
+                @test cmfold(model, scratch, "\0A") == "\0a"
+                # CR+LF is the one ASCII pair that joins into a single cluster (misses -> per-char)
+                @test cmfold(model, scratch, "A\r\nA") == "a\r\na"
+                # malformed byte between mapped chars -> U+FFFD, neighbors still folded
+                @test cmfold(model, scratch, String(UInt8[0x41, 0xff, 0x41])) == "a�a"
+                # end-to-end: folding runs before tokenization ('A' reaches the vocab as 'a')
+                @test encode(model, "cAt") == encode(model, "cat")
             end
         end
     end

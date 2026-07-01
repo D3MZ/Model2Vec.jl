@@ -1,3 +1,5 @@
-label,min_ns,records_per_s,ratio_vs_rust
-Julia (Model2Vec.jl),2014800334.0,1985.3,0.5554
-Rust (native, no FFI),1119097250.0,3574.3,1.0000
+model,tokenizer,label,min_ns,records_per_s,ratio_vs_rust
+potion-base-8M,WordPiece,Julia (Model2Vec.jl),159838834,25025.2,3.3161
+potion-base-8M,WordPiece,Rust (native no FFI),530045083,7546.5,1.0000
+potion-multilingual-128M,Unigram,Julia (Model2Vec.jl),1233019000,3244.1,0.9223
+potion-multilingual-128M,Unigram,Rust (native no FFI),1137273000,3517.2,1.0000

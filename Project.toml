@@ -4,9 +4,9 @@ authors = ["Demetrius Michael <arrrwalktheplank@gmail.com>"]
 version = "0.1.0"
 
 [deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 StringViews = "354b36f9-a18e-4713-926e-db85100087ba"
-Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 [compat]
 JSON = "1"

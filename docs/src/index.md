@@ -51,7 +51,7 @@ empirically to be a zero-allocation lookup key); Unigram walks a trie built once
 run Viterbi segmentation without per-position string allocation.
 
 See the [README](https://github.com/D3MZ/Model2Vec.jl#readme) for the benchmark plot and full
-write-up, [Scope](scope.md) for what's approximated on non-ASCII input, and the
+write-up, [Scope](scope.md) for non-ASCII handling and known limits, and the
 [API reference](@ref api) for the functions.
 
 ## [API reference](@id api)

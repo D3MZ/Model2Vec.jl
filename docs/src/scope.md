@@ -1,19 +1,21 @@
 # Scope
 
-Case-folding and whitespace/punctuation handling are byte-level ASCII. Full Unicode
-normalization is approximated, not implemented byte-for-byte:
+Case-folding and whitespace/punctuation handling are byte-level ASCII.
 
   * **WordPiece**: no accent stripping; non-ASCII words are skipped (contribute no tokens)
     rather than mis-tokenized, since WordPiece's `##`-continuation search assumes single-byte
     characters.
   * **Unigram**: the SentencePiece `Precompiled` charsmap (a binary Unicode-folding table) is
-    approximated with `Unicode.normalize` (NFKC + control/ignorable stripping). This matches the
-    reference tokenizer closely on ASCII/Latin-script text; on non-Latin-script text (tested
-    against real multilingual web text) embeddings can diverge from the reference by a few
-    percent of cosine distance in the worst case.
+    implemented byte-for-byte — the darts double-array trie is decoded straight from
+    `tokenizer.json` and traversed exactly like the reference `spm_precompiled` crate,
+    including its grapheme-cluster replacement rule — as are the reference crate's Viterbi
+    lattice, `fuse_unk`, and unk-scoring semantics. Measured against the Rust reference on
+    4,000 real multilingual web-crawl records: cosine agreement ≥ 0.9995 on every record,
+    median 1.0. Two residual edge cases are documented at the top of `src/unigram.jl`
+    (grapheme segmentation library version drift, and U+FFFD counting on invalid UTF-8).
 
-Both gaps are about matching a reference byte-for-byte on non-ASCII input, not about crashing or
-producing garbage — every input, ASCII or not, still tokenizes and pools to a valid embedding.
+Neither backend crashes or produces garbage — every input, ASCII or not, still tokenizes and
+pools to a valid embedding.
 
 ## Other known limits
 

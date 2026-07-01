@@ -2,9 +2,8 @@
     Model2Vec
 
 Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static
-embedding models: **allocation-free** for `WordPiece`-tokenized models, and faster than an
-in-process Rust FFI bridge running the same algorithm for both `WordPiece` and `Unigram`
-(SentencePiece) tokenizers.
+embedding models: **allocation-free** for both `WordPiece`- and `Unigram`-tokenized models,
+and faster than an in-process Rust FFI bridge running the same algorithm.
 
 A model2vec model is tokenize -> look up a per-token embedding row -> mean-pool -> optionally
 L2-normalize. The tokenizer is the expensive part; this package implements both tokenizer
@@ -27,14 +26,15 @@ v2 = Model2Vec.encode!(scratch, model, "another sentence")
 ```
 
 # Scope
-Case-folding and whitespace/punctuation handling are byte-level ASCII; full Unicode
-normalization (accent stripping for WordPiece, the SentencePiece `Precompiled` charsmap for
-Unigram) is approximated, not implemented byte-for-byte — see `README.md` for the measured
-correctness impact on non-ASCII text.
+WordPiece's case-folding and whitespace/punctuation handling are byte-level ASCII; its accent
+stripping is approximated, not implemented byte-for-byte — see `README.md` for the measured
+correctness impact on non-ASCII text. Unigram's SentencePiece `Precompiled` charsmap *is*
+implemented byte-for-byte (a darts double-array trie decoded straight from tokenizer.json);
+see the scope note atop `src/unigram.jl` for the two residual edge-case divergences.
 """
 module Model2Vec
 
-using JSON, StringViews, Unicode
+using JSON, StringViews, Base64
 
 export load, encode, encode!, Scratch
 
@@ -85,7 +85,7 @@ encode(model::StaticModel, text::AbstractString) = copy(encode!(Scratch(model), 
 
 Build the reusable scratch buffers `encode!` needs for `model` — a `WordPieceScratch` or
 `UnigramScratch`, matching `model`'s type. Construct once per (task, model) pair and reuse it
-across calls; this is what makes the hot loop allocation-free for `WordPieceModel`s. Not safe to
+across calls; this is what makes the hot loop allocation-free. Not safe to
 share across concurrent tasks (each needs its own).
 """ Scratch
 
@@ -94,8 +94,8 @@ share across concurrent tasks (each needs its own).
 
 Encode `text` into `scratch`'s pooling buffer and return it. The returned vector is owned by
 `scratch` and will be overwritten by the next call — `copy` it if you need to keep the result
-(this is what [`encode`](@ref) does for you). Allocation-free after warmup for `WordPieceModel`s;
-see the package docstring's Scope section for `UnigramModel`'s tradeoff.
+(this is what [`encode`](@ref) does for you). Allocation-free after warmup for both model
+types (buffers grow to the longest input seen, then are reused).
 """ encode!
 
 end
