@@ -6,5 +6,6 @@ lcov.info
 /docs/Manifest.toml
 /docs/build/
 /bench/corpus.txt
+/bench/Manifest.toml
 /bench/rust_ref/target/
 /bench/rust_ref/Cargo.lock

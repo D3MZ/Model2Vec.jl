@@ -1,5 +1,5 @@
 model,tokenizer,label,min_ns,records_per_s,ratio_vs_rust
-potion-base-8M,WordPiece,Julia (Model2Vec.jl),8737000,457840.5,6.6047
-potion-base-8M,WordPiece,Rust (native no FFI),57693000,69332.1,1.0000
-potion-multilingual-128M,Unigram,Julia (Model2Vec.jl),50281000,79553.0,1.1140
-potion-multilingual-128M,Unigram,Rust (native no FFI),56024000,71398.1,1.0000
+potion-base-8M,WordPiece,Julia (Model2Vec.jl),251629792,15896.4,2.2177
+potion-base-8M,WordPiece,Rust (native no FFI),558032250,7168.0,1.0000
+potion-multilingual-128M,Unigram,Julia (Model2Vec.jl),2504082333,1597.4,0.4679
+potion-multilingual-128M,Unigram,Rust (native no FFI),1171766209,3413.7,1.0000

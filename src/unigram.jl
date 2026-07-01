@@ -258,7 +258,16 @@ end
 # not implemented byte-for-byte: NFKC composition + stripping default-ignorable/BOM and control
 # characters. Allocates (Unicode.normalize returns a new String) -- the one place this backend
 # is not allocation-free; see the module/README scope note.
-approxcharsmap(text::AbstractString) = Unicode.normalize(text; compose=true, stripignore=true, stripcc=true)
+#
+# `Unicode.normalize` requires valid UTF-8 and throws otherwise; real-world text (e.g. crawled
+# web pages with mixed/broken encodings) is not guaranteed to be. Rust's `String::from_utf8_lossy`
+# tolerates this at the FFI boundary; matching that robustness here means dropping invalid
+# characters before normalizing rather than crashing (mirrors MonsieurPapin's `decode()`, which
+# hit this same issue upstream of this package).
+function approxcharsmap(text::AbstractString)
+    valid = isvalid(text) ? text : sprint(io -> for c in text; isvalid(c) && print(io, c); end)
+    Unicode.normalize(valid; compose=true, stripignore=true, stripcc=true)
+end
 
 function encode!(scratch::UnigramScratch, model::UnigramModel, text::AbstractString)
     text = approxcharsmap(text)

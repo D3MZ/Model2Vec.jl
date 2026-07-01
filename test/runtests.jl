@@ -179,6 +179,19 @@ end
                 @test !all(iszero, v)
             end
 
+            @testset "Unigram tolerates invalid UTF-8 (real WET content is not guaranteed valid)" begin
+                # `String` is just a byte buffer in Julia -- this constructs one that is *not*
+                # valid UTF-8 (a lone continuation byte, 0xFF, spliced into otherwise-valid text),
+                # the same class of input that crashed Unicode.normalize before approxcharsmap
+                # started sanitizing first (matching Rust's String::from_utf8_lossy tolerance).
+                invalid = String(UInt8[0x63, 0x61, 0x74, 0xff, 0x64, 0x6f, 0x67]) # "cat" 0xFF "dog"
+                @test !isvalid(invalid)
+                scratch = Scratch(model)
+                v = encode!(scratch, model, invalid)
+                @test length(v) == model.dim
+                @test !any(isnan, v)
+            end
+
             @testset "Unigram Viterbi UNK fallback (direct, isolated from real-vocab luck)" begin
                 # Low-level: bypasses load()/encode! entirely so this doesn't depend on whether a
                 # real or fixture vocab happens to have full byte coverage -- 'z' is deliberately

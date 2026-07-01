@@ -127,8 +127,12 @@ fn main() {
     let runs: usize = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let model = StaticModel::from_local(&modeldir);
-    let texts: Vec<String> = fs::read_to_string(&corpuspath)
-        .expect("read corpus")
+    // Real WET content can contain invalid UTF-8 (mixed/broken source encodings). The production
+    // worker tolerates this via `String::from_utf8_lossy` at the FFI boundary (see model.rs's
+    // `score`) -- match that here with a lossy read instead of `fs::read_to_string`'s strict
+    // UTF-8 requirement, or this reference would panic on the exact input it's meant to benchmark.
+    let raw = fs::read(&corpuspath).expect("read corpus");
+    let texts: Vec<String> = String::from_utf8_lossy(&raw)
         .lines()
         .map(String::from)
         .collect();
