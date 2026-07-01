@@ -136,6 +136,32 @@ end
             end
         end
 
+        @testset "embedding dtype support: F32, F16, I8" begin
+            for dtype in ("F32", "F16", "I8")
+                mktempdir() do dir
+                    wpdir = buildwordpiecefixture(dir; dtype)
+                    model = load(wpdir)
+                    v = encode(model, "cat dog")
+                    @test length(v) == model.dim
+                    @test !any(isnan, v)
+                    @test !all(iszero, v)
+                end
+            end
+            @testset "load() rejects unsupported embedding dtypes" begin
+                mktempdir() do dir
+                    write(joinpath(dir, "tokenizer.json"), """{"model": {"type": "WordPiece", "vocab": {"a": 0}, "unk_token": "[UNK]"}}""")
+                    header = JSON.json(Dict("embeddings" => Dict("dtype" => "I16", "shape" => [1, 2], "data_offsets" => [0, 4])))
+                    open(joinpath(dir, "model.safetensors"), "w") do io
+                        write(io, htol(UInt64(ncodeunits(header))))
+                        write(io, header)
+                        write(io, zeros(UInt8, 4))
+                    end
+                    writeconfig(joinpath(dir, "config.json"))
+                    @test_throws ErrorException load(dir)
+                end
+            end
+        end
+
         mktempdir() do dir
             ugdir = buildunigramfixture(joinpath(dir, "ug"))
             model = load(ugdir)

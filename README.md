@@ -50,7 +50,7 @@ end
 | | Rust (`tokenizers`+`safetensors`, no FFI) | **Model2Vec.jl** |
 |---|:---:|:---:|
 | WordPiece · Unigram tokenizers | ✓ · ✓ | ✓ · ✓ |
-| Embedding dtype | F32 · F16 · I8 | F32 |
+| Embedding dtype | F32 · F16 · I8 | F32 · F16 · I8 |
 | Per-token weights / dedup-mapping tensors | ✓ | ✗ (errors loudly, not silently wrong) |
 | Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · – |
 | Non-ASCII normalization | Exact | Approximated (exact on ASCII/Latin-script) |
@@ -58,7 +58,7 @@ end
 | Speed (this repo's benchmark, single thread) | 1.00x | 1.11x–6.60x |
 | Language · FFI | Rust · – | Julia · **none** |
 
-Model2Vec.jl trades F16/I8 dtype support, weighted/deduplicated model tensors, and remote Hugging Face downloads for being faster, having no FFI dependency, and (for WordPiece) allocation-free. Both cover the two tokenizer families model2vec ships with. Details: [Scope](#scope).
+Model2Vec.jl trades weighted/deduplicated model tensors and remote Hugging Face downloads for being faster, having no FFI dependency, and (for WordPiece) allocation-free. Both cover the two tokenizer families model2vec ships with and all three embedding dtypes. Details: [Scope](#scope).
 
 ## Scope
 

@@ -24,5 +24,5 @@ producing garbage — every input, ASCII or not, still tokenizes and pools to a 
   * Models with `weights` or `mapping` safetensors (per-token Zipf scale, dedup row remap) are
     rejected with a clear error rather than silently pooled incorrectly — `potion-base-8M` and
     `potion-multilingual-128M` (the models this package is benchmarked against) have neither.
-  * Only `F32` embedding tensors are supported; `F16`/`I8` (which some model2vec checkpoints use)
-    are not.
+  * `F32`, `F16`, and `I8` embedding tensors are all supported (decoded to `F32` at load time,
+    matching the Rust reference's unscaled direct cast for `I8`).

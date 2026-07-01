@@ -4,12 +4,24 @@
 using JSON
 
 # Writes a minimal valid safetensors file with one "embeddings" tensor: `vocab` rows x `dim`
-# cols, F32, row-major (matching what real model2vec checkpoints ship).
-function writesafetensors(path::AbstractString, embeddings::Matrix{Float32})
+# cols, row-major (matching what real model2vec checkpoints ship). `dtype` selects the on-disk
+# encoding ("F32", "F16", or "I8" -- matching what loadembeddings supports); values are cast
+# accordingly, so pass fixture values already sized for the target dtype (e.g. small integers
+# for "I8", since it's an unscaled direct cast, matching the Rust reference).
+function writesafetensors(path::AbstractString, embeddings::Matrix{Float32}; dtype="F32")
     vocab, dim = size(embeddings) # embeddings[i, :] is token (i-1)'s row
-    data = reinterpret(UInt8, vec(permutedims(embeddings))) # row-major bytes
+    rowmajor = vec(permutedims(embeddings))
+    data = if dtype == "F32"
+        reinterpret(UInt8, rowmajor)
+    elseif dtype == "F16"
+        reinterpret(UInt8, Float16.(rowmajor))
+    elseif dtype == "I8"
+        reinterpret(UInt8, Int8.(rowmajor))
+    else
+        error("fixtures.jl: unsupported dtype $dtype")
+    end
     header = Dict("embeddings" => Dict(
-        "dtype" => "F32", "shape" => [vocab, dim], "data_offsets" => [0, length(data)],
+        "dtype" => dtype, "shape" => [vocab, dim], "data_offsets" => [0, length(data)],
     ))
     headerjson = JSON.json(header)
     open(path, "w") do io
@@ -61,12 +73,16 @@ function fixtureembeddings(vocab::Integer, dim::Integer)
     e
 end
 
-function buildwordpiecefixture(dir::AbstractString; normalize=true)
+function buildwordpiecefixture(dir::AbstractString; normalize=true, dtype="F32")
     mkpath(dir)
     pieces = ["[PAD]", "[UNK]", "cat", "dog", "run", "##ning", "the", "a", "b"]
     dim = 4
+    # I8 is an unscaled direct cast (matching the Rust reference), so scale up first -- otherwise
+    # the smooth sin()-based fixture values (all in [-1,1]) would mostly round to the same few
+    # integers and the distinctness/similarity assertions below would be meaningless.
+    embeddings = dtype == "I8" ? round.(fixtureembeddings(length(pieces), dim) .* 20) : fixtureembeddings(length(pieces), dim)
     writewordpiecetokenizer(joinpath(dir, "tokenizer.json"), pieces; max_input_chars_per_word=10)
-    writesafetensors(joinpath(dir, "model.safetensors"), fixtureembeddings(length(pieces), dim))
+    writesafetensors(joinpath(dir, "model.safetensors"), embeddings; dtype)
     writeconfig(joinpath(dir, "config.json"); normalize)
     dir
 end
