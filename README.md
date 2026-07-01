@@ -52,7 +52,7 @@ end
 | WordPiece · Unigram tokenizers | ✓ · ✓ | ✓ · ✓ |
 | Embedding dtype | F32 · F16 · I8 | F32 · F16 · I8 |
 | Per-token weights / dedup-mapping tensors | ✓ | ✓ |
-| Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · – |
+| Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · by design, see [Scope](#scope) |
 | Non-ASCII normalization | Exact | Unigram exact · WordPiece approximated |
 | Allocation-free hot path | ✗ | ✓ |
 | Speed (this repo's benchmark, single thread) | 1.00x | 0.92x–3.32x |

@@ -20,9 +20,18 @@ pools to a valid embedding.
 ## Other known limits
 
   * `load` only reads local model2vec snapshot directories (`tokenizer.json`,
-    `model.safetensors`, `config.json`) — it does not download from the Hugging Face Hub. Fetch
-    the snapshot yourself first (e.g. with `hf-hub` from Rust, `huggingface_hub` from Python, or
-    by cloning the model repo).
+    `model.safetensors`, `config.json`) — **by design**, not a missing feature: Hugging Face
+    Hub downloads pull in HTTP, auth tokens, and etag/resume caching, which don't belong in a
+    package whose entire value proposition is zero-dependency, allocation-free inference.
+    MonsieurPapin's own `hubsnapshot` helper follows the same resolve-local-and-error pattern.
+    Fetch the snapshot yourself first, e.g.:
+    ```julia
+    using HuggingFaceApi # ] add HuggingFaceApi
+    modeldir = dirname(hf_hub_download("minishlab/potion-base-8M", "tokenizer.json"))
+    ```
+    or from the shell: `huggingface-cli download minishlab/potion-base-8M` (Python) or
+    `hf download minishlab/potion-base-8M` (the `huggingface_hub` CLI), or clone the model repo
+    directly.
   * Models with `weights` or `mapping` safetensors (the per-token pooling scale and
     deduplicated-row remap produced by the official package's `vocabulary_quantization`) are
     supported: each pooled token contributes `weights[t] * embeddings[mapping[t]]`, matching
