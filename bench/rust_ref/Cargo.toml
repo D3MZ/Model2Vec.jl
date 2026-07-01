@@ -1,0 +1,19 @@
+[package]
+name = "m2v_ref"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "m2v_ref"
+path = "src/main.rs"
+
+[dependencies]
+half = "2.7.1"
+safetensors = "0.5.3"
+serde_json = "1.0.149"
+tokenizers = "0.22.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

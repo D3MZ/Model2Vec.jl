@@ -1,0 +1,8 @@
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+lcov.info
+/Manifest.toml
+/bench/corpus.txt
+/bench/rust_ref/target/
+/bench/rust_ref/Cargo.lock

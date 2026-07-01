@@ -1,0 +1,20 @@
+name = "Model2Vec"
+uuid = "a3d833e3-40d2-47b9-8492-f6c811fb3ac9"
+authors = ["Demetrius Michael <arrrwalktheplank@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+StringViews = "354b36f9-a18e-4713-926e-db85100087ba"
+Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+
+[compat]
+JSON = "1"
+StringViews = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

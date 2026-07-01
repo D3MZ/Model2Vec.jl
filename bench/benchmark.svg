@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" font-family="Helvetica,Arial,sans-serif">
+<rect width="900" height="420" fill="white"/>
+<text x="450" y="26" text-anchor="middle" font-size="18" font-weight="bold">Model2Vec.jl (native Julia) vs a native Rust reference — single thread</text>
+<text x="260" y="50" text-anchor="middle" font-size="14" font-weight="bold">potion-base-8M (WordPiece)</text>
+<rect x="70" y="60" width="380" height="270" fill="#fafafa" stroke="#ccc"/>
+<rect x="149" y="114" width="95" height="216" fill="#1f7a4d"/>
+<text x="196" y="108" text-anchor="middle" font-size="11" fill="#333">457840</text>
+<text x="196" y="346" text-anchor="middle" font-size="10" fill="#333">Julia</text>
+<rect x="275" y="297" width="95" height="33" fill="#d1495b"/>
+<text x="322" y="291" text-anchor="middle" font-size="11" fill="#333">69332</text>
+<text x="322" y="346" text-anchor="middle" font-size="10" fill="#333">Rust</text>
+<text x="78" y="74" font-size="11" fill="#555">records/s (higher = better)</text>
+<text x="680" y="50" text-anchor="middle" font-size="14" font-weight="bold">potion-multilingual-128M (Unigram)</text>
+<rect x="490" y="60" width="380" height="270" fill="#fafafa" stroke="#ccc"/>
+<rect x="569" y="114" width="95" height="216" fill="#1f7a4d"/>
+<text x="616" y="108" text-anchor="middle" font-size="11" fill="#333">79553</text>
+<text x="616" y="346" text-anchor="middle" font-size="10" fill="#333">Julia</text>
+<rect x="695" y="136" width="95" height="194" fill="#d1495b"/>
+<text x="742" y="130" text-anchor="middle" font-size="11" fill="#333">71398</text>
+<text x="742" y="346" text-anchor="middle" font-size="10" fill="#333">Rust</text>
+<text x="498" y="74" font-size="11" fill="#555">records/s (higher = better)</text>
+<rect x="70" y="396" width="14" height="14" fill="#1f7a4d"/><text x="90" y="408" font-size="13">Model2Vec.jl (native Julia)</text>
+<rect x="310" y="396" width="14" height="14" fill="#d1495b"/><text x="330" y="408" font-size="13">Rust model2vec reference (native, no FFI)</text>
+</svg>
