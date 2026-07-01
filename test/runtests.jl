@@ -61,6 +61,12 @@ end
             encode!(scratch, model, "warmup") # compile + first grow
             allocated = @allocated encode!(scratch, model, "cat dog")
             @test allocated == 0
+
+            # over-budget text (pre-truncation path) must stay allocation-free too: the cut is a
+            # byte bound handed to tokenizewp!, never a materialized substring
+            long = repeat("the quick brown fox jumps over the lazy dog ", 300) # ≫ 512*median chars
+            encode!(scratch, model, long) # warm up buffer growth for this length
+            @test (@allocated encode!(scratch, model, long)) == 0
         end
 
         @testset "WordPiece handles multi-byte UTF-8 without erroring (out of scope, must not crash)" begin
@@ -134,6 +140,45 @@ end
                 @test !any(isnan, v)
                 @test !all(iszero, v) # "cat"/"dog"/"run"/"##ning"/"the"/"a" all match real pieces
             end
+
+            @testset "input pre-truncation parity with model.rs truncate()" begin
+                # Raw vocab key byte lengths sorted: [1,1,3,3,3,3,5,5,6] ("##ning" counted with
+                # its prefix, like Rust's get_vocab keys); Rust takes lengths[9/2] (0-indexed) = 3.
+                @test model.median == 3
+                limit = Model2Vec.MAX_LENGTH * model.median # 1536-char budget
+
+                short = "cat dog"
+                @test Model2Vec.truncateinput(short, model.median) === short # under budget: unchanged
+
+                atlimit = "a"^limit
+                @test Model2Vec.truncateinput(atlimit, model.median) === atlimit # exactly at budget: Rust's None branch
+
+                kept = Model2Vec.truncateinput(atlimit * "ZZZ", model.median)
+                @test kept == atlimit # cut right before character budget+1, matching nth(chars)'s 0-indexing
+                @test length(kept) == limit
+
+                # budget counts characters, not bytes: "é" is 2 bytes but 1 char, so the full
+                # `limit` chars (2*limit bytes) survive and only the char past the budget is cut
+                mb = Model2Vec.truncateinput("é"^limit * "Z", model.median)
+                @test mb == "é"^limit
+                # over budget in *bytes* but exactly at budget in *chars*: kept whole (the loop
+                # runs -- byte short-circuit can't apply -- but never reaches character budget+1)
+                mbat = "é"^limit
+                @test Model2Vec.truncateinput(mbat, model.median) === mbat
+
+                # end-to-end: content past the char budget cannot influence the embedding...
+                head = "cat "^(limit ÷ 4) # exactly `limit` chars
+                @test encode(model, head * "dog dog dog") == encode(model, head)
+                # ...but the same word placed *inside* the budget does
+                @test encode(model, "cat "^(limit ÷ 4 - 1) * "dog ") != encode(model, head)
+
+                # long invalid UTF-8: char-counting must not crash (each malformed byte = 1 char)
+                invalid = String(repeat(UInt8[0x63, 0x61, 0x74, 0xff, 0x20], 500)) # "cat\xff " x500 > limit bytes
+                @test !isvalid(invalid)
+                v = encode!(Scratch(model), model, invalid)
+                @test length(v) == model.dim
+                @test !any(isnan, v)
+            end
         end
 
         @testset "embedding dtype support: F32, F16, I8" begin
@@ -204,6 +249,27 @@ end
                 n = Model2Vec.metaspace!(scratch2, Vector{UInt8}(codeunits("z")), 1)
                 ids = Model2Vec.viterbi!(scratch2, vocab, n)
                 @test ids == Int32[2, vocab.unk_id]
+            end
+
+            @testset "Unigram input pre-truncation (char budget from raw vocab median)" begin
+                # Raw piece byte lengths sorted: [1,1,3,5,5,6,6] ("▁cat" counted with its 3-byte
+                # metaspace prefix); Rust takes lengths[7/2] (0-indexed) = 5 -> 2560-char budget.
+                @test model.median == 5
+                limit = Model2Vec.MAX_LENGTH * model.median
+                # Each 10-char word tokenizes to one real "▁" piece + 9 UNKs (filtered before the
+                # 512-token cap), so 256 words = 256 real tokens: the char budget binds *before*
+                # the token cap, making pre-truncation observable end-to-end.
+                head = "zzzzzzzzz "^(limit ÷ 10) # exactly `limit` chars
+                @test encode(model, head * "dog") == encode(model, head) # "dog" past the budget: dropped
+                @test encode(model, "zzzzzzzzz "^(limit ÷ 10 - 1) * "zzzzz dog ") != encode(model, head) # inside: kept
+
+                # long invalid UTF-8 through the full Unigram path (truncation + charsmap sanitize)
+                invalid = String(repeat(UInt8[0x63, 0x61, 0x74, 0xff, 0x20], 3 * Model2Vec.MAX_LENGTH))
+                @test ncodeunits(invalid) > limit
+                @test !isvalid(invalid)
+                v = encode!(Scratch(model), model, invalid)
+                @test length(v) == model.dim
+                @test !any(isnan, v)
             end
         end
     end

@@ -18,6 +18,7 @@ struct WordPieceModel <: StaticModel
     embeddings::Matrix{Float32} # (dim, vocab_size), column j = embedding of token id (j-1)
     dim::Int
     normalize::Bool
+    median::Int # median byte-length of raw vocab keys ("##" included); input budget for truncateinput
 end
 
 # `view` wraps `word` *by reference* (StringView holds the Vector object, not a copy), so
@@ -53,13 +54,13 @@ function loadwordpiecevocab(path::AbstractString)
         end
     end
     unk_id = Int32(get(vocab, unk_token, -1))
-    WordPieceVocab(initial, continuation, unk_id, max_input_chars_per_word)
+    WordPieceVocab(initial, continuation, unk_id, max_input_chars_per_word), vocabmedian([sizeof(tok) for tok in keys(vocab)])
 end
 
 function loadwordpiece(dir::AbstractString)
-    vocab = loadwordpiecevocab(joinpath(dir, "tokenizer.json"))
+    vocab, median = loadwordpiecevocab(joinpath(dir, "tokenizer.json"))
     embeddings = loadembeddings(joinpath(dir, "model.safetensors"))
-    WordPieceModel(vocab, embeddings, size(embeddings, 1), loadnormalize(dir))
+    WordPieceModel(vocab, embeddings, size(embeddings, 1), loadnormalize(dir), median)
 end
 
 @inline isasciipunctwp(b::UInt8) =
@@ -110,15 +111,16 @@ function wordpiece!(ids::Vector{Int32}, vocab::WordPieceVocab, view::StringView{
     end
 end
 
-# Tokenize `text`, writing resulting ids into `scratch.ids` (cleared first). ASCII fast path:
-# splits on whitespace, treats each ASCII punctuation byte as its own single-char word.
-function tokenizewp!(scratch::WordPieceScratch, vocab::WordPieceVocab, text::AbstractString)
+# Tokenize the first `n` codeunits of `text` (a char-boundary cut from `truncatebound` -- passed
+# as a byte count rather than a substring to stay allocation-free), writing resulting ids into
+# `scratch.ids` (cleared first). ASCII fast path: splits on whitespace, treats each ASCII
+# punctuation byte as its own single-char word.
+function tokenizewp!(scratch::WordPieceScratch, vocab::WordPieceVocab, text::AbstractString, n::Int)
     ids = scratch.ids
     empty!(ids)
     word = scratch.word
     view = scratch.view
     units = codeunits(text)
-    n = length(units)
     wlen = 0
     i = 1
     @inbounds while i <= n
@@ -175,7 +177,8 @@ end
 # Allocation-free after warmup: no candidate-lookup String is ever materialized (see `view`
 # above), and `scratch`'s buffers only grow, never reallocate on a steady-state text-length mix.
 function encode!(scratch::WordPieceScratch, model::WordPieceModel, text::AbstractString)
-    tokenizewp!(scratch, model.vocab, text)
+    # parity with model.rs: budget raw input (as a byte bound, no substring) before tokenizing
+    tokenizewp!(scratch, model.vocab, text, truncatebound(text, model.median))
     length(scratch.ids) > MAX_LENGTH && resize!(scratch.ids, MAX_LENGTH)
     poolwp!(scratch, model)
 end

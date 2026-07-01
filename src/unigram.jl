@@ -70,6 +70,7 @@ struct UnigramModel <: StaticModel
     embeddings::Matrix{Float32} # (dim, vocab)
     dim::Int
     normalize::Bool
+    median::Int # median byte-length of raw vocab keys ("▁" included); input budget for truncateinput
 end
 
 mutable struct UnigramScratch
@@ -98,13 +99,13 @@ function loadunigramvocab(path::AbstractString)
         trieinsert!(trie, codeunits(piece), Int32(i - 1), score)
     end
     unk_score = Float32(vocab[unk_id+1][2])
-    UnigramVocab(trie, unk_id, unk_score)
+    UnigramVocab(trie, unk_id, unk_score), vocabmedian([sizeof(entry[1]::AbstractString) for entry in vocab])
 end
 
 function loadunigram(dir::AbstractString)
-    vocab = loadunigramvocab(joinpath(dir, "tokenizer.json"))
+    vocab, median = loadunigramvocab(joinpath(dir, "tokenizer.json"))
     embeddings = loadembeddings(joinpath(dir, "model.safetensors"))
-    UnigramModel(vocab, embeddings, size(embeddings, 1), loadnormalize(dir))
+    UnigramModel(vocab, embeddings, size(embeddings, 1), loadnormalize(dir), median)
 end
 
 @inline isspacebyteug(b::UInt8) = b == 0x20 || b == 0x09 || b == 0x0a || b == 0x0d || b == 0x0c || b == 0x0b
@@ -270,6 +271,7 @@ function approxcharsmap(text::AbstractString)
 end
 
 function encode!(scratch::UnigramScratch, model::UnigramModel, text::AbstractString)
+    text = truncateinput(text, model.median) # parity with model.rs: budget raw input before tokenizing
     text = approxcharsmap(text)
     normlen = normalizeug!(scratch.normbuf, text)
     n = metaspace!(scratch, scratch.normbuf, normlen)
