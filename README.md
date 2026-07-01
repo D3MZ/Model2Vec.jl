@@ -30,6 +30,12 @@ generates a deterministic multilingual corpus, builds the Rust reference, runs b
 side is a plain binary — no FFI, no jlrs, the same tokenize→pool→normalize algorithm — so this is
 the fairest comparison available, not an FFI-overhead artifact.</sub>
 
+**In production**: [MonsieurPapin](https://github.com/D3MZ/MonsieurPapin.jl) switched its
+embedding-scoring path from an in-process Rust FFI bridge to this package after a head-to-head
+benchmark over 21,465 real web-crawl records (`potion-multilingual-128M`, Unigram) — **2.4-2.6x
+faster**, 0.998 score correlation with the Rust bridge it replaced. See MonsieurPapin's
+`test/benchmarks.jl` for that comparison, which now runs as a standing regression guard.
+
 ## Install
 
 ```julia
