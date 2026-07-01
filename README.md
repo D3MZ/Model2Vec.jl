@@ -9,12 +9,12 @@ Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) s
 
 <p align="center"><img src="bench/benchmark.svg" width="820" alt="benchmark"></p>
 
-| 4,000-record synthetic corpus, M1 Max, single thread | throughput | vs Rust |
-|---|---:|---:|
-| **WordPiece** (`potion-base-8M`) — Julia | **457,841 records/s, 0 allocs** | **6.60x** |
-| WordPiece — Rust (native, no FFI) | 69,332 records/s | 1.00x |
-| **Unigram** (`potion-multilingual-128M`) — Julia | **79,553 records/s** | **1.11x** |
-| Unigram — Rust (native, no FFI) | 71,398 records/s | 1.00x |
+4,000-record synthetic corpus, M1 Max, single thread, Rust = native (no FFI):
+
+| Tokenizer (model) | Julia | Rust | Speedup |
+|---|---:|---:|---:|
+| WordPiece (`potion-base-8M`) | **457,841 records/s, 0 allocs** | 69,332 records/s | **6.60x** |
+| Unigram (`potion-multilingual-128M`) | **79,553 records/s** | 71,398 records/s | **1.11x** |
 
 <sub>Reproduce: `bench/run.sh`.</sub>
 
