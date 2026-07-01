@@ -5,7 +5,7 @@
 [![docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://D3MZ.github.io/Model2Vec.jl/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static embedding models: **allocation-free** for both tokenizer families model2vec ships with — `WordPiece` (e.g. `potion-base-8M`) and `Unigram`/SentencePiece (e.g. `potion-multilingual-128M`).
+Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static embedding models: **allocation-free** for both tokenizer families model2vec ships with — `WordPiece` (e.g. `potion-base-8M`) and `Unigram`/SentencePiece (e.g. `potion-multilingual-128M`) — and faster than a native (no-FFI) Rust reference running the identical algorithm, for both.
 
 <p align="center"><img src="bench/benchmark.svg" width="820" alt="benchmark"></p>
 
@@ -13,12 +13,12 @@ Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) s
 
 | Tokenizer (model) | Julia | Rust | Speedup |
 |---|---:|---:|---:|
-| WordPiece (`potion-base-8M`) | **25,025 records/s, 0 allocs** | 7,546 records/s | **3.32x** |
-| Unigram (`potion-multilingual-128M`) | **3,244 records/s, 0 allocs** | 3,517 records/s | **0.92x** |
+| WordPiece (`potion-base-8M`) | **24,344 records/s, 0 allocs** | 7,604 records/s | **3.20x** |
+| Unigram (`potion-multilingual-128M`) | **5,780 records/s, 0 allocs** | 3,576 records/s | **1.62x** |
 
-<sub>Reproduce: `bench/run.sh` (extracts real page text from a Common Crawl WET file — see [`bench/extract_wet_corpus.jl`](bench/extract_wet_corpus.jl)).</sub>
+<sub>Reproduce: `bench/run.sh` (extracts real page text from a Common Crawl WET file — see [`bench/extract_wet_corpus.jl`](bench/extract_wet_corpus.jl)). Unigram's vocab trie is a darts-style double-array built at load time, matching the same technique the `Precompiled` charsmap decoder already used — see [How it works](#how-it-works).</sub>
 
-In production: [MonsieurPapin](https://github.com/D3MZ/MonsieurPapin.jl) switched from a Rust FFI bridge to this package — **2.4-2.6x faster**, 0.998 score correlation, over 21,465 real web-crawl records.
+In production: [MonsieurPapin](https://github.com/D3MZ/MonsieurPapin.jl) switched from a Rust FFI bridge to this package — **8.95x faster**, 0.9999999... score correlation, over 21,465 real web-crawl records (this package's own isolated hot path is allocation-free; MonsieurPapin's wrapper carries a small residual ~3.25 allocs/record from its own WET-record handling, not from Model2Vec.jl).
 
 ## Install
 
@@ -55,7 +55,7 @@ end
 | Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · by design, see [Scope](#scope) |
 | Non-ASCII normalization | Exact | Unigram exact · WordPiece approximated |
 | Allocation-free hot path | ✗ | ✓ |
-| Speed (this repo's benchmark, single thread) | 1.00x | 0.92x–3.32x |
+| Speed (this repo's benchmark, single thread) | 1.00x | 1.62x–3.20x |
 | Language · FFI | Rust · – | Julia · **none** |
 
 Model2Vec.jl trades remote Hugging Face downloads for having no FFI dependency and an allocation-free hot path. Both cover the two tokenizer families model2vec ships with, all three embedding dtypes, and the `weights`/`mapping` tensors vocabulary-quantized checkpoints carry. Details: [Scope](#scope).
@@ -66,7 +66,7 @@ Case-folding and punctuation handling are byte-level ASCII. WordPiece approximat
 
 ## How it works
 
-Both backends load the model once (tokenizer vocab into a `Dict`-pair for WordPiece or a byte-trie for Unigram, embeddings as a zero-copy reshape of the safetensors file), then reuse a `Scratch` buffer so tokenization never allocates a fresh `String` per candidate: WordPiece looks up `Dict{String,Int32}` vocab maps via `SubString`s of a `StringView` over a persistent buffer (a zero-allocation lookup key); Unigram walks a trie built at load time to run Viterbi segmentation with no per-position string allocation.
+Both backends load the model once (tokenizer vocab into a `Dict`-pair for WordPiece or a darts-style double-array trie for Unigram, embeddings as a zero-copy reshape of the safetensors file), then reuse a `Scratch` buffer so tokenization never allocates a fresh `String` per candidate: WordPiece looks up `Dict{String,Int32}` vocab maps via `SubString`s of a `StringView` over a persistent buffer (a zero-allocation lookup key); Unigram walks its double-array trie — one XOR and one label check per byte, no pointer-chasing — to run Viterbi segmentation with no per-position string allocation. The vocab trie is built with the same double-array technique the `Precompiled` charsmap decoder uses to read SentencePiece's own pre-built one, constructed here from scratch at load time.
 
 ## Citing
 

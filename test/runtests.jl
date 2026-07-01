@@ -432,5 +432,22 @@ end
                 @test encode(model, "cAt") == encode(model, "cat")
             end
         end
+
+        @testset "double-array vocab trie growth (free list exhausted mid-construction)" begin
+            # Fixture vocabs never outgrow the initial capacity (freeze sizes it at 1.5x the
+            # node count), so exercise the grow path directly: fill every slot of a
+            # minimum-size (256-slot) build, then ask for a base -- the first-fit walk must
+            # run off the free list, double the arrays, and place the base in the fresh tail.
+            b = Model2Vec.DartsBuild(1)
+            @test length(b.meta) == 256
+            for s in 0:255
+                Model2Vec.dartsoccupy!(b, s, UInt64(0x61))
+            end
+            @test b.freehead == Int32(-1)
+            base = Model2Vec.dartsfindbase!(b, UInt8[0x61])
+            @test length(b.meta) == 512
+            @test base == 256 ⊻ 0x61 # aimed at the first slot of the grown tail
+            @test Model2Vec.dartsfree(b, base ⊻ 0x61)
+        end
     end
 end

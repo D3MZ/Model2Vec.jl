@@ -49,6 +49,7 @@ const PUNCTLUT = Ref{NTuple{256,Bool}}()
 struct Charsmap
     trie::Vector{UInt32} # darts double-array units
     pool::Vector{UInt8}  # replacement strings, NUL-terminated
+    asciipass::Vector{Bool} # 128 entries; see the 2-arg constructor below charsmaptransform
 end
 Charsmap() = Charsmap(UInt32[], UInt8[])
 
@@ -111,6 +112,23 @@ end
     -1
 end
 
+# `asciipass[b+1]`: byte `b` is a printable-ASCII char the charsmap can never rewrite, so runs
+# of such bytes can be copied verbatim (see the fast path in charsmapnormalize!). True iff the
+# single-byte transform misses -- sufficient because extended grapheme clusters group pure-ASCII
+# chars one per cluster (no ASCII char has Extend/Prepend/ZWJ properties), so the reference
+# algorithm only ever offers *single* ASCII chars to the trie; a multi-byte key starting with an
+# ASCII byte (letter + combining mark) can only fire on a cluster whose *head* is that letter,
+# which the fast path leaves to the slow path by holding back a run's last char whenever the
+# next char is non-ASCII. The one pure-ASCII multi-char cluster, "\r\n", is excluded by forcing
+# CR off the table (real NFKC-derived charsmaps map every C0 control anyway).
+function Charsmap(trie::Vector{UInt32}, pool::Vector{UInt8})
+    cm = Charsmap(trie, pool, fill(true, 128))
+    for b in 0x01:0x7f
+        cm.asciipass[b+1] = b != 0x0d && charsmaptransform(cm, (b,), 1, 1) < 0
+    end
+    cm
+end
+
 # Byte length of the NUL-terminated pool entry starting at 0-based offset `off`.
 @inline function poollen(cm::Charsmap, off::Int)
     pool = cm.pool
@@ -122,21 +140,29 @@ end
 end
 
 # Byte-trie over the vocab. Built with per-node Dicts (TrieBuilder, load time only), then
-# frozen into a flat CSR layout for the Viterbi hot loop: node i's children are the sorted
-# byte range edges[head[i]:head[i+1]-1]. Each edge packs (child_node << 8) | byte and each
-# terminal packs (score_bits << 32) | id_bits into one word, so every probe and every node
-# visit touches a single cache line -- markedly faster than per-node Dict probing, which used
-# to dominate the encode profile. The root's children get a dense 256-entry table instead:
-# every Viterbi position starts with a root lookup, making it the hottest of all.
+# frozen into a darts-style double-array layout for the Viterbi hot loop -- the same technique
+# the `Precompiled` charsmap above ships pre-built, constructed here from scratch at load time.
+# Slots are 0-based; slot `s` owns two adjacent UInt64 words: `slots[2s+1]` packs the slot's
+# in-edge byte label (9 bits; 0x100 marks a free slot, unmatched by any real byte) and the
+# node's child `base` (bits 9+), and `slots[2s+2]` packs its terminal (score_bits << 32) |
+# id_bits, id -1 = not a complete piece. A node's child along byte `b` lives at slot
+# `base XOR b` and is valid iff that slot's stored label equals `b` -- one interleaved 16-byte
+# pair per node visit (meta + terminal on the same cache line), vs. head/edges/terminal spread
+# over three arrays in the previous CSR layout. Leaves share a `base` aimed at a 256-aligned
+# all-free "dead block" at the end of the array, so the lookup is branchless and, because the
+# slot count is a multiple of 256 and every base < slot count, always in bounds. The root
+# (slot 0, never returned as a child) additionally gets a dense 256-entry table: every Viterbi
+# position starts with a root lookup, making it the hottest of all.
 struct Trie
-    rootlut::Vector{Int32}  # dense byte -> child table for node 1 (0 = no child)
-    head::Vector{Int32}     # node i's children occupy edges[head[i]:head[i+1]-1]
-    edges::Vector{UInt32}   # (child_node << 8) | edge_byte, byte-sorted within each range
-    terminal::Vector{UInt64}# (score_bits << 32) | id_bits; id -1 = not a complete piece
+    rootlut::Vector{Int32} # dense byte -> child slot for the root (0 = no child)
+    slots::Vector{UInt64}  # 2 words per slot: [label | base << 9], [terminal]
 end
 
-@inline edgebyte(e::UInt32) = e % UInt8
-@inline edgechild(e::UInt32) = Int32(e >> 8)
+const TRIEFREE = UInt64(0x100) # label field of a free slot: no input byte can match it
+
+@inline trielabel(m::UInt64) = m & 0x1ff
+@inline triebase(m::UInt64) = Int(m >> 9)
+@inline trieterminal(trie::Trie, node::Int32) = @inbounds trie.slots[2 * Int(node) + 2]
 @inline terminalid(t::UInt64) = reinterpret(Int32, t % UInt32)
 @inline terminalscore(t::UInt64) = reinterpret(Float32, (t >> 32) % UInt32)
 @inline packterminal(id::Int32, score::Float32) =
@@ -167,47 +193,152 @@ function trieinsert!(trie::TrieBuilder, bytes::AbstractVector{UInt8}, id::Int32,
     trie.terminalscore[node] = score
 end
 
-# Flatten the builder into the packed CSR layout, keeping insertion (vocab) order: pieces
-# sharing a prefix are inserted consecutively, so a Viterbi walk down a path touches nearby
-# nodes -- benchmarked faster than a BFS renumbering on the real WET corpus.
+# Mutable double-array under construction: label/base metas and terminals kept as separate
+# grow-by-doubling arrays (interleaved only at the end), a doubly-linked list threading the
+# free slots (O(1) removal, first-fit iteration from `freehead`), and a used-`base` bitset --
+# two distinct nodes must never share a base, or a query on one could label-match a child of
+# the other. Capacity stays a multiple of 256 so `base XOR byte` never escapes it.
+mutable struct DartsBuild
+    meta::Vector{UInt64}
+    term::Vector{UInt64}
+    nextfree::Vector{Int32} # 0-based successor free slot, -1 = list end
+    prevfree::Vector{Int32} # 0-based predecessor free slot, -1 = list head
+    usedbase::BitVector
+    freehead::Int32
+    maxused::Int
+end
+
+function DartsBuild(cap::Int)
+    cap = max(256, 256 * cld(cap, 256))
+    b = DartsBuild(fill(TRIEFREE, cap), fill(packterminal(Int32(-1), 0f0), cap),
+                   Vector{Int32}(undef, cap), Vector{Int32}(undef, cap),
+                   falses(cap), Int32(0), 0)
+    for s in 0:cap-1
+        b.nextfree[s+1] = Int32(s + 1 < cap ? s + 1 : -1)
+        b.prevfree[s+1] = Int32(s - 1)
+    end
+    b
+end
+
+function dartsgrow!(b::DartsBuild)
+    old = length(b.meta)
+    cap = 2 * old
+    resize!(b.meta, cap); resize!(b.term, cap)
+    resize!(b.nextfree, cap); resize!(b.prevfree, cap)
+    resize!(b.usedbase, cap)
+    for s in old:cap-1
+        b.meta[s+1] = TRIEFREE
+        b.term[s+1] = packterminal(Int32(-1), 0f0)
+        b.nextfree[s+1] = Int32(s + 1 < cap ? s + 1 : -1)
+        b.prevfree[s+1] = Int32(s - 1)
+        b.usedbase[s+1] = false
+    end
+    # the old range was fully allocated (growth only happens once first-fit runs off the end),
+    # so the fresh tail is the entire free list
+    b.freehead = Int32(old)
+    b.prevfree[old+1] = Int32(-1)
+    nothing
+end
+
+@inline dartsfree(b::DartsBuild, s::Int) = @inbounds trielabel(b.meta[s+1]) == TRIEFREE
+
+function dartsoccupy!(b::DartsBuild, s::Int, label::UInt64)
+    nxt = b.nextfree[s+1]; prv = b.prevfree[s+1]
+    nxt >= 0 && (b.prevfree[nxt+1] = prv)
+    prv >= 0 ? (b.nextfree[prv+1] = nxt) : (b.freehead = nxt)
+    b.meta[s+1] = label # base filled in when this node's own children are placed
+    s > b.maxused && (b.maxused = s)
+    nothing
+end
+
+# First-fit base search: walk the free list, aim the first child byte at each free slot, and
+# accept the first base whose full child set lands on free slots and that no other node uses.
+function dartsfindbase!(b::DartsBuild, bytes::Vector{UInt8})
+    c1 = Int(bytes[1])
+    e = Int(b.freehead)
+    while true
+        if e < 0
+            e = length(b.meta)
+            dartsgrow!(b)
+        end
+        base = e ⊻ c1
+        if !b.usedbase[base+1]
+            ok = true
+            for k in 2:length(bytes)
+                t = base ⊻ Int(bytes[k]) # < cap: capacity is a multiple of 256 and e < cap
+                if !dartsfree(b, t)
+                    ok = false
+                    break
+                end
+            end
+            if ok
+                b.usedbase[base+1] = true
+                return base
+            end
+        end
+        e = Int(b.nextfree[e+1])
+    end
+end
+
+# Freeze the builder into the double-array, processing nodes in builder-index order (a child's
+# builder index always exceeds its parent's, so every node's slot is assigned before its own
+# children are placed) -- which is vocab insertion order, keeping prefix-sharing pieces in
+# nearby slots, the same locality argument the previous CSR layout benchmarked as a win.
 function freeze(builder::TrieBuilder)
     children = builder.children
     nnodes = length(children)
-    nnodes < (1 << 24) || error("vocab trie has $nnodes nodes; packed UInt32 edges hold < 2^24")
-    head = Vector{Int32}(undef, nnodes + 1)
-    edges = Vector{UInt32}(undef, nnodes - 1) # every node but the root has exactly one in-edge
-    pos = 1
+    b = DartsBuild(nnodes + nnodes ÷ 2)
+    # reserve slot 0 for the root, so 0 stays the "no child" sentinel; its label (0x101) is
+    # neither the free marker (construction must see slot 0 as occupied) nor matchable by any
+    # real byte (a query can compute candidate slot 0 whenever base == byte)
+    dartsoccupy!(b, 0, UInt64(0x101))
+    slotof = Vector{Int32}(undef, nnodes)
+    slotof[1] = 0
+    bytesbuf = UInt8[]
     for i in 1:nnodes
-        head[i] = pos
-        for b in sort!(collect(keys(children[i])))
-            edges[pos] = (UInt32(children[i][b]) << 8) | b
-            pos += 1
+        s = Int(slotof[i])
+        b.term[s+1] = packterminal(builder.terminalid[i], builder.terminalscore[i])
+        node = children[i]
+        isempty(node) && continue # leaves get the shared dead-block base below
+        resize!(bytesbuf, length(node))
+        copyto!(bytesbuf, sort!(collect(keys(node))))
+        base = dartsfindbase!(b, bytesbuf)
+        b.meta[s+1] = (b.meta[s+1] & 0x1ff) | (UInt64(base) << 9)
+        for c in bytesbuf
+            t = base ⊻ Int(c)
+            dartsoccupy!(b, t, UInt64(c))
+            slotof[node[c]] = Int32(t)
         end
     end
-    head[nnodes+1] = pos
-    rootlut = zeros(Int32, 256)
-    for (b, node) in children[1]
-        rootlut[Int(b)+1] = node
+    # dead block: 256 aligned, guaranteed-free slots past everything used; leaves point their
+    # base here so lookups on them miss branchlessly. No real node can have been assigned this
+    # base: a 256-aligned base B places children at B+byte >= B, so B <= maxused < deadbase.
+    deadbase = 256 * cld(b.maxused + 1, 256)
+    nslots = deadbase + 256
+    for i in 1:nnodes
+        isempty(children[i]) && (b.meta[slotof[i]+1] = (b.meta[slotof[i]+1] & 0x1ff) | (UInt64(deadbase) << 9))
     end
-    Trie(rootlut, head, edges, packterminal.(builder.terminalid, builder.terminalscore))
+    slots = Vector{UInt64}(undef, 2 * nslots)
+    for s in 0:nslots-1
+        inrange = s < length(b.meta)
+        slots[2s+1] = inrange ? b.meta[s+1] : TRIEFREE
+        slots[2s+2] = inrange ? b.term[s+1] : packterminal(Int32(-1), 0f0)
+    end
+    rootlut = zeros(Int32, 256)
+    for (c, node) in children[1]
+        rootlut[Int(c)+1] = slotof[node]
+    end
+    Trie(rootlut, slots)
 end
 
-# Child of `node` along edge byte `b`, or 0: forward scan of the node's byte-sorted range,
-# stopping early once past `b`. Non-root nodes have few children, so a sequential scan of one
-# packed cache line beats binary search's data-dependent jumps (measured on the WET corpus);
-# the root -- the one genuinely wide node -- never gets here, it has the dense rootlut.
+# Child of `node` along edge byte `b`, or 0: one XOR to the candidate slot, one label check.
+# The root -- the one genuinely wide node -- never gets here, it has the dense rootlut.
 @inline function triechild(trie::Trie, node::Int32, b::UInt8)
+    slots = trie.slots
     @inbounds begin
-        k = trie.head[node]
-        stop = trie.head[node+1]
-        while k < stop
-            e = trie.edges[k]
-            eb = edgebyte(e)
-            eb >= b && return ifelse(eb == b, edgechild(e), Int32(0))
-            k += Int32(1)
-        end
+        t = triebase(slots[2 * Int(node) + 1]) ⊻ Int(b)
+        ifelse(trielabel(slots[2t+1]) == b, Int32(t), Int32(0))
     end
-    Int32(0)
 end
 
 struct UnigramVocab
@@ -357,14 +488,37 @@ function charsmapnormalize!(scratch::UnigramScratch, cm::Charsmap, text::Abstrac
     out = 0
     state = scratch.graphemestate
     state[] = Int32(0)
+    asciipass = cm.asciipass
     clusterstart = 1
     prevc = '\0'
     i = 1
-    while i <= bound
+    @inbounds while i <= bound
+        # Fast path, valid only at a cluster head (no pending cluster): bulk-copy a run of
+        # charsmap-inert ASCII bytes (see asciipass) -- each is its own grapheme cluster and
+        # can never be rewritten, so Char decoding, grapheme-break state calls, and trie probes
+        # are all skipped. When the byte after the run is non-ASCII the run's *last* char is
+        # held back for the slow path: it may head a longer cluster (e.g. letter + combining
+        # mark) whose whole-cluster trie lookup could genuinely hit.
+        if i == clusterstart && units[i] < 0x80 && asciipass[units[i]+1]
+            j = i + 1
+            while j <= bound && units[j] < 0x80 && asciipass[units[j]+1]
+                j += 1
+            end
+            stop = (j > bound || units[j] < 0x80) ? j - 1 : j - 2
+            if stop >= i
+                out = emitbytes!(scratch, units, i, stop, out)
+                clusterstart = i = stop + 1
+                state[] = Int32(0) # exact: the last two chars seen are ASCII, which resets it
+                continue
+            end
+        end
         c, nexti = iterate(text, i)::Tuple{Char,Int}
         if i > clusterstart && graphemebreakug(state, prevc, c) # i > clusterstart: c has a predecessor
             out = foldcluster!(scratch, cm, text, units, clusterstart, i - 1, out)
             clusterstart = i
+            # re-enter the loop top without consuming c: the new cluster head may start an
+            # ASCII fast-path run (the one decoded-Char redundancy per run entry is cheap)
+            units[i] < 0x80 && asciipass[units[i]+1] && continue
         end
         prevc = c
         i = nexti
@@ -443,7 +597,7 @@ function viterbi!(scratch::UnigramScratch, vocab::UnigramVocab, n::Int)
     length(best) < n + 1 && (resize!(best, n + 1); resize!(backpos, n + 1); resize!(backid, n + 1))
     bytes = scratch.bytes
     trie = vocab.trie
-    terminal = trie.terminal; rootlut = trie.rootlut
+    rootlut = trie.rootlut
     unk = vocab.unk_id
 
     @inbounds begin
@@ -459,7 +613,7 @@ function viterbi!(scratch::UnigramScratch, vocab::UnigramVocab, n::Int)
             j = i + 1
             singlenode = false # whether some piece covers exactly this one char
             while node != 0
-                t = terminal[node]
+                t = trieterminal(trie, node)
                 tid = terminalid(t)
                 if tid >= 0
                     cand = best[i] + terminalscore(t)
