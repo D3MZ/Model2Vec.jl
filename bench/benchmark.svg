@@ -4,19 +4,19 @@
 <text x="260" y="50" text-anchor="middle" font-size="14" font-weight="bold">potion-base-8M (WordPiece)</text>
 <rect x="70" y="60" width="380" height="270" fill="#fafafa" stroke="#ccc"/>
 <rect x="149" y="114" width="95" height="216" fill="#1f7a4d"/>
-<text x="196" y="108" text-anchor="middle" font-size="11" fill="#333">25025</text>
+<text x="196" y="108" text-anchor="middle" font-size="11" fill="#333">20948</text>
 <text x="196" y="346" text-anchor="middle" font-size="10" fill="#333">Julia</text>
-<rect x="275" y="265" width="95" height="65" fill="#d1495b"/>
-<text x="322" y="259" text-anchor="middle" font-size="11" fill="#333">7546</text>
+<rect x="275" y="259" width="95" height="71" fill="#d1495b"/>
+<text x="322" y="253" text-anchor="middle" font-size="11" fill="#333">6914</text>
 <text x="322" y="346" text-anchor="middle" font-size="10" fill="#333">Rust</text>
 <text x="78" y="74" font-size="11" fill="#555">records/s (higher = better)</text>
 <text x="680" y="50" text-anchor="middle" font-size="14" font-weight="bold">potion-multilingual-128M (Unigram)</text>
 <rect x="490" y="60" width="380" height="270" fill="#fafafa" stroke="#ccc"/>
-<rect x="569" y="131" width="95" height="199" fill="#1f7a4d"/>
-<text x="616" y="125" text-anchor="middle" font-size="11" fill="#333">3244</text>
+<rect x="569" y="129" width="95" height="201" fill="#1f7a4d"/>
+<text x="616" y="123" text-anchor="middle" font-size="11" fill="#333">3049</text>
 <text x="616" y="346" text-anchor="middle" font-size="10" fill="#333">Julia</text>
 <rect x="695" y="114" width="95" height="216" fill="#d1495b"/>
-<text x="742" y="108" text-anchor="middle" font-size="11" fill="#333">3517</text>
+<text x="742" y="108" text-anchor="middle" font-size="11" fill="#333">3280</text>
 <text x="742" y="346" text-anchor="middle" font-size="10" fill="#333">Rust</text>
 <text x="498" y="74" font-size="11" fill="#555">records/s (higher = better)</text>
 <rect x="70" y="396" width="14" height="14" fill="#1f7a4d"/><text x="90" y="408" font-size="13">Model2Vec.jl (native Julia)</text>

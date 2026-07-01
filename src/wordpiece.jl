@@ -15,7 +15,9 @@ end
 
 struct WordPieceModel <: StaticModel
     vocab::WordPieceVocab
-    embeddings::Matrix{Float32} # (dim, vocab_size), column j = embedding of token id (j-1)
+    embeddings::Matrix{Float32} # (dim, rows), column mapping[t]+1 = embedding of token id t
+    weights::Vector{Float32}    # per-token pooling scale (all ones when the tensor is absent)
+    mapping::Vector{Int32}      # per-token 0-based embedding row (identity when absent)
     dim::Int
     normalize::Bool
     median::Int # median byte-length of raw vocab keys ("##" included); input budget for truncateinput
@@ -59,8 +61,8 @@ end
 
 function loadwordpiece(dir::AbstractString)
     vocab, median = loadwordpiecevocab(joinpath(dir, "tokenizer.json"))
-    embeddings = loadembeddings(joinpath(dir, "model.safetensors"))
-    WordPieceModel(vocab, embeddings, size(embeddings, 1), loadnormalize(dir), median)
+    embeddings, weights, mapping = loadembeddings(joinpath(dir, "model.safetensors"))
+    WordPieceModel(vocab, embeddings, weights, mapping, size(embeddings, 1), loadnormalize(dir), median)
 end
 
 @inline isasciipunctwp(b::UInt8) =
@@ -143,16 +145,23 @@ function tokenizewp!(scratch::WordPieceScratch, vocab::WordPieceVocab, text::Abs
 end
 
 # Mean-pool + (optional) L2-normalize the embedding rows selected by `ids` into `scratch.sum`.
+# Every token goes through `mapping` (its 0-based embedding row) and `weights` (its scale),
+# matching model.rs's `pool`; both are materialized identity/unit vectors for models without
+# the tensors (see loadembeddings), so the loop stays branch-free and allocation-free.
 function poolwp!(scratch::WordPieceScratch, model::WordPieceModel)
     sum = scratch.sum
     fill!(sum, 0f0)
     ids = scratch.ids
     E = model.embeddings
+    weights = model.weights
+    mapping = model.mapping
     count = 0
     @inbounds for id in ids
-        col = Int(id) + 1
+        t = Int(id) + 1
+        col = Int(mapping[t]) + 1
+        w = weights[t]
         @simd for k in 1:model.dim
-            sum[k] += E[k, col]
+            sum[k] += w * E[k, col]
         end
         count += 1
     end

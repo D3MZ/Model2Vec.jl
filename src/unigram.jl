@@ -219,7 +219,9 @@ end
 struct UnigramModel <: StaticModel
     vocab::UnigramVocab
     charsmap::Charsmap
-    embeddings::Matrix{Float32} # (dim, vocab)
+    embeddings::Matrix{Float32} # (dim, rows), column mapping[t]+1 = embedding of token id t
+    weights::Vector{Float32}    # per-token pooling scale (all ones when the tensor is absent)
+    mapping::Vector{Int32}      # per-token 0-based embedding row (identity when absent)
     dim::Int
     normalize::Bool
     median::Int # median byte-length of raw vocab keys ("▁" included); input budget for truncatebound
@@ -264,8 +266,8 @@ function loadunigram(dir::AbstractString)
     spec = JSON.parsefile(joinpath(dir, "tokenizer.json"))
     vocab, median = loadunigramvocab(spec)
     charsmap = loadcharsmap(spec)
-    embeddings = loadembeddings(joinpath(dir, "model.safetensors"))
-    UnigramModel(vocab, charsmap, embeddings, size(embeddings, 1), loadnormalize(dir), median)
+    embeddings, weights, mapping = loadembeddings(joinpath(dir, "model.safetensors"))
+    UnigramModel(vocab, charsmap, embeddings, weights, mapping, size(embeddings, 1), loadnormalize(dir), median)
 end
 
 @inline isspacebyteug(b::UInt8) = b == 0x20 || b == 0x09 || b == 0x0a || b == 0x0d || b == 0x0c || b == 0x0b
@@ -517,16 +519,21 @@ function viterbi!(scratch::UnigramScratch, vocab::UnigramVocab, n::Int)
     ids
 end
 
+# Weights/mapping indirection identical to poolwp! -- see the comment there.
 function poolug!(scratch::UnigramScratch, model::UnigramModel)
     sum = scratch.sum
     fill!(sum, 0f0)
     ids = scratch.ids # fused unk ids included, matching model.rs (see encode! below)
     E = model.embeddings
+    weights = model.weights
+    mapping = model.mapping
     count = 0
     @inbounds for id in ids
-        col = Int(id) + 1
+        t = Int(id) + 1
+        col = Int(mapping[t]) + 1
+        w = weights[t]
         @simd for k in 1:model.dim
-            sum[k] += E[k, col]
+            sum[k] += w * E[k, col]
         end
         count += 1
     end

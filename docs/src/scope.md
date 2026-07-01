@@ -23,8 +23,13 @@ pools to a valid embedding.
     `model.safetensors`, `config.json`) — it does not download from the Hugging Face Hub. Fetch
     the snapshot yourself first (e.g. with `hf-hub` from Rust, `huggingface_hub` from Python, or
     by cloning the model repo).
-  * Models with `weights` or `mapping` safetensors (per-token Zipf scale, dedup row remap) are
-    rejected with a clear error rather than silently pooled incorrectly — `potion-base-8M` and
-    `potion-multilingual-128M` (the models this package is benchmarked against) have neither.
+  * Models with `weights` or `mapping` safetensors (the per-token pooling scale and
+    deduplicated-row remap produced by the official package's `vocabulary_quantization`) are
+    supported: each pooled token contributes `weights[t] * embeddings[mapping[t]]`, matching
+    the Rust reference's `pool`. Weights decode from `F64`/`F32`/`F16`; mapping from
+    `I32`/`I64` (the dtype set the official `model2vec-rs` crate validates against — sklearn's
+    KMeans labels are int32, so `I32` is what checkpoints ship in practice). When absent, both
+    are materialized as unit/identity vectors at load time so the pooling hot loops stay
+    branch-free and allocation-free either way.
   * `F32`, `F16`, and `I8` embedding tensors are all supported (decoded to `F32` at load time,
     matching the Rust reference's unscaled direct cast for `I8`).

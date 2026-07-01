@@ -51,14 +51,14 @@ end
 |---|:---:|:---:|
 | WordPiece · Unigram tokenizers | ✓ · ✓ | ✓ · ✓ |
 | Embedding dtype | F32 · F16 · I8 | F32 · F16 · I8 |
-| Per-token weights / dedup-mapping tensors | ✓ | ✗ (errors loudly, not silently wrong) |
+| Per-token weights / dedup-mapping tensors | ✓ | ✓ |
 | Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · – |
 | Non-ASCII normalization | Exact | Unigram exact · WordPiece approximated |
 | Allocation-free hot path | ✗ | ✓ |
 | Speed (this repo's benchmark, single thread) | 1.00x | 0.92x–3.32x |
 | Language · FFI | Rust · – | Julia · **none** |
 
-Model2Vec.jl trades weighted/deduplicated model tensors and remote Hugging Face downloads for having no FFI dependency and an allocation-free hot path. Both cover the two tokenizer families model2vec ships with and all three embedding dtypes. Details: [Scope](#scope).
+Model2Vec.jl trades remote Hugging Face downloads for having no FFI dependency and an allocation-free hot path. Both cover the two tokenizer families model2vec ships with, all three embedding dtypes, and the `weights`/`mapping` tensors vocabulary-quantized checkpoints carry. Details: [Scope](#scope).
 
 ## Scope
 

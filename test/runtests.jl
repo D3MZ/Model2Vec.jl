@@ -236,6 +236,95 @@ end
             end
         end
 
+        # `weights`/`mapping` tensors, shipped by vocabulary-quantized checkpoints: per-token
+        # pooling scale, and per-token remap onto a deduplicated (smaller) embedding matrix.
+        # WordPiece fixture ids: [PAD]=0 [UNK]=1 cat=2 dog=3 run=4 ##ning=5 the=6 a=7 b=8.
+        @testset "weights/mapping tensors (vocabulary-quantized checkpoints)" begin
+            wpweights = Float32[1, 1, 2, 3, 1, 1, 1, 1, 1]        # cat scaled 2x, dog 3x
+            wpmapping = Int32[0, 1, 2, 2, 3, 4, 5, 6, 7]          # cat & dog share row 2 -> 8 rows
+            e9 = fixtureembeddings(9, 4)                          # rows for the no-mapping fixtures
+            e8 = fixtureembeddings(8, 4)                          # deduplicated rows (max(mapping)+1)
+
+            @testset "weights only: rows are scaled before the mean" begin
+                mktempdir() do d
+                    model = load(buildwordpiecefixture(d; normalize=false, weights=wpweights))
+                    @test model.mapping == Int32.(0:8) # absent tensor -> materialized identity
+                    # "cat dog" pools ids [2, 3]: mean of the *scaled* rows, computed by hand
+                    expected = (2f0 .* e9[3, :] .+ 3f0 .* e9[4, :]) ./ 2f0
+                    @test encode(model, "cat dog") ≈ expected
+                    @test encode(model, "cat dog") != (e9[3, :] .+ e9[4, :]) ./ 2f0 # differs from unweighted
+                end
+            end
+
+            @testset "mapping only: dedup -- tokens sharing a row embed identically" begin
+                mktempdir() do d
+                    model = load(buildwordpiecefixture(d; normalize=false, mapping=wpmapping))
+                    @test model.weights == ones(Float32, 9) # absent tensor -> materialized unit scale
+                    @test size(model.embeddings, 2) == 8    # fewer rows than the 9-token vocab
+                    @test encode(model, "cat") == encode(model, "dog") # both pool row 2
+                    @test encode(model, "cat") ≈ e8[3, :]
+                    @test encode(model, "cat") != encode(model, "the")
+                end
+            end
+
+            @testset "both together (hand-computed), I64 mapping, F64/F16 weights" begin
+                for (mappingdtype, weightsdtype) in (("I32", "F32"), ("I64", "F64"), ("I32", "F16"))
+                    mktempdir() do d
+                        model = load(buildwordpiecefixture(d; normalize=false, weights=wpweights,
+                                                           mapping=wpmapping, mappingdtype, weightsdtype))
+                        # ids [2, 3] both map to row 2; scales 2 and 3 are exact in F16/F64
+                        @test encode(model, "cat dog") ≈ (2f0 .+ 3f0) .* e8[3, :] ./ 2f0
+                    end
+                end
+            end
+
+            @testset "explicit unit/identity tensors match the tensor-free model exactly" begin
+                mktempdir() do d
+                    plain = load(buildwordpiecefixture(joinpath(d, "plain")))
+                    trivial = load(buildwordpiecefixture(joinpath(d, "trivial");
+                                                         weights=ones(Float32, 9), mapping=Int32.(0:8)))
+                    @test encode(trivial, "cat dog running the end") == encode(plain, "cat dog running the end")
+                end
+            end
+
+            @testset "unsupported weights/mapping dtypes are rejected" begin
+                mktempdir() do d
+                    @test_throws ErrorException load(buildwordpiecefixture(joinpath(d, "w");
+                                                                           weights=wpweights, weightsdtype="I8"))
+                    @test_throws ErrorException load(buildwordpiecefixture(joinpath(d, "m");
+                                                                           mapping=wpmapping, mappingdtype="F32"))
+                end
+            end
+
+            # Unigram fixture ids: [PAD]=0 [UNK]=1 ▁=2 ▁cat=3 ▁dog=4 a=5 b=6.
+            @testset "Unigram backend: weights + mapping, hand-computed" begin
+                ugweights = Float32[1, 1, 1, 2, 3, 1, 1] # ▁cat scaled 2x, ▁dog 3x
+                ugmapping = Int32[0, 1, 2, 3, 3, 4, 5]   # ▁cat & ▁dog share row 3 -> 6 rows
+                e6 = fixtureembeddings(6, 4)
+                mktempdir() do d
+                    model = load(buildunigramfixture(d; normalize=false, weights=ugweights, mapping=ugmapping))
+                    @test size(model.embeddings, 2) == 6
+                    # "cat dog" pools ids [3, 4], both on row 3: (2 + 3) * row / 2
+                    @test encode(model, "cat dog") ≈ (2f0 .+ 3f0) .* e6[4, :] ./ 2f0
+                end
+            end
+
+            @testset "hot paths stay allocation-free with weights/mapping present" begin
+                mktempdir() do d
+                    wp = load(buildwordpiecefixture(joinpath(d, "wp"); weights=wpweights, mapping=wpmapping))
+                    swp = Scratch(wp)
+                    encode!(swp, wp, "cat dog") # compile + first buffer growth
+                    @test (@allocated encode!(swp, wp, "cat dog")) == 0
+
+                    ug = load(buildunigramfixture(joinpath(d, "ug");
+                                                  weights=Float32[1, 1, 1, 2, 3, 1, 1], mapping=Int32[0, 1, 2, 3, 3, 4, 5]))
+                    sug = Scratch(ug)
+                    encode!(sug, ug, "cat dog z, cat!")
+                    @test (@allocated encode!(sug, ug, "cat dog z, cat!")) == 0
+                end
+            end
+        end
+
         mktempdir() do dir
             ugdir = buildunigramfixture(joinpath(dir, "ug"))
             model = load(ugdir)

@@ -6,8 +6,11 @@ embedding models: **allocation-free** for both `WordPiece`- and `Unigram`-tokeni
 and faster than an in-process Rust FFI bridge running the same algorithm.
 
 A model2vec model is tokenize -> look up a per-token embedding row -> mean-pool -> optionally
-L2-normalize. The tokenizer is the expensive part; this package implements both tokenizer
-families model2vec models ship with directly in Julia (byte-level, no FFI):
+L2-normalize. Vocabulary-quantized checkpoints additionally ship `weights` (per-token pooling
+scale) and `mapping` (per-token remap onto deduplicated embedding rows) tensors — both are
+supported, and both default to unit/identity when absent. The tokenizer is the expensive part;
+this package implements both tokenizer families model2vec models ship with directly in Julia
+(byte-level, no FFI):
 
   * **WordPiece** (BERT-style: e.g. `minishlab/potion-base-8M`) — greedy longest-match per word.
   * **Unigram** (SentencePiece-style: e.g. `minishlab/potion-multilingual-128M`) — Viterbi
