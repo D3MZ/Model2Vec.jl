@@ -45,6 +45,21 @@ end
 
 `load` auto-detects the tokenizer family from `tokenizer.json`.
 
+## Features vs. the alternatives
+
+| | Rust (`tokenizers`+`safetensors`, no FFI) | **Model2Vec.jl** |
+|---|:---:|:---:|
+| WordPiece · Unigram tokenizers | ✓ · ✓ | ✓ · ✓ |
+| Embedding dtype | F32 · F16 · I8 | F32 |
+| Per-token weights / dedup-mapping tensors | ✓ | ✗ (errors loudly, not silently wrong) |
+| Load from local path · Hugging Face Hub | ✓ · ✓ | ✓ · – |
+| Non-ASCII normalization | Exact | Approximated (exact on ASCII/Latin-script) |
+| Allocation-free hot path | ✗ | ✓ WordPiece · ✗ Unigram |
+| Speed (this repo's benchmark, single thread) | 1.00x | 1.11x–6.60x |
+| Language · FFI | Rust · – | Julia · **none** |
+
+Model2Vec.jl trades F16/I8 dtype support, weighted/deduplicated model tensors, and remote Hugging Face downloads for being faster, having no FFI dependency, and (for WordPiece) allocation-free. Both cover the two tokenizer families model2vec ships with. Details: [Scope](#scope).
+
 ## Scope
 
 Case-folding and punctuation handling are byte-level ASCII; full Unicode normalization is approximated, not byte-for-byte. WordPiece skips non-ASCII words rather than mis-tokenizing them. Unigram approximates SentencePiece's `Precompiled` charsmap with `Unicode.normalize` — exact on ASCII/Latin-script text, up to a few percent cosine-distance drift on non-Latin-script text. Neither gap crashes or produces garbage; every input still tokenizes and pools to a valid embedding.
