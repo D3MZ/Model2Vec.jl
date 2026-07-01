@@ -1,5 +1,8 @@
 # Model2Vec.jl
 
+[![CI](https://github.com/D3MZ/Model2Vec.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/D3MZ/Model2Vec.jl/actions/workflows/CI.yml)
+[![codecov](https://codecov.io/gh/D3MZ/Model2Vec.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/D3MZ/Model2Vec.jl)
+[![docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://D3MZ.github.io/Model2Vec.jl/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Native-Julia inference for [model2vec](https://github.com/MinishLab/model2vec) static embedding
@@ -87,6 +90,10 @@ allocates a fresh `String` per candidate: WordPiece looks up `Dict{String,Int32}
 using `SubString`s of a `StringView` wrapped around a persistent scratch buffer (verified
 empirically to be a zero-allocation lookup key); Unigram walks a trie built once at load time to
 run Viterbi segmentation without per-position string allocation.
+
+## Citing
+
+If this package is useful in your work, please cite it — see [`CITATION.bib`](CITATION.bib).
 
 ## License
 

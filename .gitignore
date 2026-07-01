@@ -3,6 +3,8 @@
 *.jl.mem
 lcov.info
 /Manifest.toml
+/docs/Manifest.toml
+/docs/build/
 /bench/corpus.txt
 /bench/rust_ref/target/
 /bench/rust_ref/Cargo.lock

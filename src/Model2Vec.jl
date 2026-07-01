@@ -44,6 +44,15 @@ include("safetensors.jl")
 include("wordpiece.jl")
 include("unigram.jl")
 
+# Populates lookup tables built from a top-level function call (not a literal) -- __init__ runs
+# on every module load (including from a precompiled cache), unlike top-level `const X = f()`,
+# which only executes once during precompilation and would otherwise be invisible to per-test-run
+# code coverage. See PUNCTLUT's definition in unigram.jl.
+function __init__()
+    PUNCTLUT[] = buildpunctlut()
+    nothing
+end
+
 """
     load(dir::AbstractString) -> StaticModel
 
@@ -70,5 +79,23 @@ One-shot encode: allocates a fresh [`Scratch`](@ref) and a fresh output vector. 
 calls (a hot loop over many texts), build a `Scratch` once and call [`encode!`](@ref) instead.
 """
 encode(model::StaticModel, text::AbstractString) = copy(encode!(Scratch(model), model, text))
+
+@doc """
+    Scratch(model::StaticModel)
+
+Build the reusable scratch buffers `encode!` needs for `model` — a `WordPieceScratch` or
+`UnigramScratch`, matching `model`'s type. Construct once per (task, model) pair and reuse it
+across calls; this is what makes the hot loop allocation-free for `WordPieceModel`s. Not safe to
+share across concurrent tasks (each needs its own).
+""" Scratch
+
+@doc """
+    encode!(scratch::Scratch, model::StaticModel, text::AbstractString) -> AbstractVector{Float32}
+
+Encode `text` into `scratch`'s pooling buffer and return it. The returned vector is owned by
+`scratch` and will be overwritten by the next call — `copy` it if you need to keep the result
+(this is what [`encode`](@ref) does for you). Allocation-free after warmup for `WordPieceModel`s;
+see the package docstring's Scope section for `UnigramModel`'s tradeoff.
+""" encode!
 
 end

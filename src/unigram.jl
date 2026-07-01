@@ -16,7 +16,21 @@
 # a few percent — see README.md for measured numbers.
 
 const PUNCT = raw"""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""
-const PUNCTLUT = ntuple(i -> UInt8(i - 1) in codeunits(PUNCT), 256)
+
+function buildpunctlut()
+    lut = fill(false, 256)
+    for b in codeunits(PUNCT)
+        lut[Int(b)+1] = true
+    end
+    Tuple(lut)
+end
+
+# A top-level `const X = f()` only executes once, during precompilation -- invisible to
+# per-test-run coverage tracking (which only sees code the coverage-instrumented process itself
+# executes; a precompiled module load skips re-running top-level statements). `__init__()` is
+# guaranteed to run on every module load, so building the LUT there instead keeps it both
+# correctly initialized and actually covered.
+const PUNCTLUT = Ref{NTuple{256,Bool}}()
 
 struct Trie
     # node 1 = root. children[node] : Dict{UInt8,Int32} byte -> child node index.
@@ -94,7 +108,7 @@ function loadunigram(dir::AbstractString)
 end
 
 @inline isspacebyteug(b::UInt8) = b == 0x20 || b == 0x09 || b == 0x0a || b == 0x0d || b == 0x0c || b == 0x0b
-@inline isasciipunctug(b::UInt8) = @inbounds PUNCTLUT[Int(b)+1]
+@inline isasciipunctug(b::UInt8) = @inbounds PUNCTLUT[][Int(b)+1]
 
 # Normalize + space out ASCII punctuation + collapse whitespace + strip, mirroring the explicit
 # Replace/Strip rules in the tokenizer.json normalizer sequence (the Precompiled charsmap step is
